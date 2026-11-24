@@ -755,13 +755,15 @@
           </select>
         </div>
         <div class="f">
-          <label>Quarter</label
+          <label>Quarter / Half Yearly</label
           ><select id="q">
-            <option>All Quarters</option>
+            <option>All Periods</option>
             <option>Q1</option>
             <option>Q2</option>
             <option>Q3</option>
             <option>Q4</option>
+            <option>H1</option>
+            <option>H2</option>
           </select>
         </div>
         <div class="f">
@@ -1065,7 +1067,28 @@
           $ = (x) => document.getElementById(x),
           fmt = (x) => Math.round(x).toLocaleString("en-GB");
         M.forEach((x) => $("m").add(new Option(x, x)));
-        $("m").value = "October";
+        const currentDate = new Date(),
+          previousMonthIndex =
+            (currentDate.getMonth() + M.length - 1) % M.length,
+          previousMonthYear =
+            currentDate.getFullYear() - (currentDate.getMonth() === 0 ? 1 : 0);
+        $("m").value = M[previousMonthIndex];
+        const quarterMatches = (quarter) => {
+          const selectedQuarter = $("q").value;
+          return (
+            selectedQuarter === "All Periods" ||
+            selectedQuarter === quarter ||
+            (selectedQuarter === "H1" && ["Q1", "Q2"].includes(quarter)) ||
+            (selectedQuarter === "H2" && ["Q3", "Q4"].includes(quarter))
+          );
+        };
+        const quarterForMonth = (month) => {
+          const monthIndex = M.indexOf(month);
+          return monthIndex === -1
+            ? "All Periods"
+            : `Q${Math.floor(monthIndex / 3) + 1}`;
+        };
+        $("q").value = quarterForMonth($("m").value);
         let data = [],
           estoreData = [],
           availableEstoreMetrics = new Set(),
@@ -1111,7 +1134,7 @@
                     x.year === $("year").value) &&
                   ($("r").value === "All Regions" || x.r === $("r").value) &&
                   ($("m").value === "All Months" || x.m === $("m").value) &&
-                  ($("q").value === "All Quarters" || x.q === $("q").value) &&
+                  quarterMatches(x.q) &&
                   (selectedCountry === "All Countries"
                     ? !hasCountryTotals || x.country === null
                     : x.country === selectedCountry),
@@ -1143,8 +1166,7 @@
                   x.year === $("year").value) &&
                 ($("r").value === "All Regions" || x.region === $("r").value) &&
                 ($("m").value === "All Months" || x.month === $("m").value) &&
-                ($("q").value === "All Quarters" ||
-                  x.quarter === $("q").value) &&
+                quarterMatches(x.quarter) &&
                 (selectedCountry === "All Countries"
                   ? !hasCountryTotals || x.country === null
                   : x.country === selectedCountry),
@@ -1393,6 +1415,15 @@
               "All Years",
               data.map((record) => record.year),
             );
+            const targetYear = String(previousMonthYear),
+              matchingYear = [...$("year").options].find((option) => {
+                const yearDigits = option.value.replace(/\D/g, "");
+                return (
+                  yearDigits === targetYear ||
+                  yearDigits === targetYear.slice(-2)
+                );
+              });
+            if (matchingYear) $("year").value = matchingYear.value;
             populateFilter(
               "r",
               "All Regions",
@@ -2079,6 +2110,11 @@
         document.querySelectorAll("select").forEach(
           (x) =>
             (x.onchange = (event) => {
+              if (event.target.id === "m") {
+                $("q").value = quarterForMonth(event.target.value);
+              } else if (event.target.id === "q") {
+                $("m").value = "All Months";
+              }
               if (event.target.id === "r") refreshCountryFilter();
               resetTablePages();
               render();
