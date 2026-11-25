@@ -19,8 +19,9 @@ marketable, campaign, form, eStore, Engaged Contacts, Touched Contacts, and
 audience data. The dashboard status tooltip identifies sheets
 with repeated placeholder values
 and sheets with no numeric data. Product columns include `Blank` when the
-workbook provides it. Review converter warnings for rows with missing keys and
-the dashboard data-status note after each refresh.
+workbook provides it. Campaign open counts remain unavailable when the source
+sheet omits its unique-open column. Review converter warnings for rows with
+missing keys and the dashboard data-status note after each refresh.
 
 The dashboard's Country filter uses country-specific rows where available and
 preserves region totals for the `All Countries` selection. It applies to

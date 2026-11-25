@@ -460,7 +460,6 @@ def read_detail_sheet(workbook, sheet_name, kind):
             campaign_name_header,
             "total_sent",
             "total_delivered",
-            "unique_html_opens",
             "total_clicks",
             "unsubscribes",
         }
