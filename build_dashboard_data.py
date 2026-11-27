@@ -502,6 +502,7 @@ def read_detail_sheet(workbook, sheet_name, kind):
                     "delivered": nullable_number(get("total_delivered"), f"{sheet_name} row {row_number}"),
                     "uniqueOpens": nullable_number(get("unique_html_opens"), f"{sheet_name} row {row_number}"),
                     "clicks": nullable_number(get("total_clicks"), f"{sheet_name} row {row_number}"),
+                    "uniqueClicks": nullable_number(get("unique_clicks"), f"{sheet_name} row {row_number}"),
                     "unsubscribes": nullable_number(get("unsubscribes"), f"{sheet_name} row {row_number}"),
                 }
             )

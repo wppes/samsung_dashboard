@@ -924,7 +924,9 @@
         <div class="grid charts" style="margin-top: 14px">
           <div class="card">
             <div class="title">Campaign Performance Trend</div>
-            <div class="sub">Open Rate and CTR by month</div>
+            <div class="sub" id="campaignGraphSub">
+              Open Rate and CTR by month
+            </div>
             <div id="campaignGraph" class="chart"></div>
           </div>
           <div class="card">
@@ -945,7 +947,8 @@
                   <th>Type</th>
                   <th>Sent</th>
                   <th>Delivered</th>
-                  <th>Open Rate</th>
+                  <th>Total Clicks</th>
+                  <th>Unique Clicks</th>
                   <th>CTR</th>
                 </tr>
               </thead>
@@ -1066,7 +1069,38 @@
           ],
           $ = (x) => document.getElementById(x),
           fmt = (x) => Math.round(x).toLocaleString("en-GB");
-        M.forEach((x) => $("m").add(new Option(x, x)));
+        const TEMPORARILY_HIDDEN_PERIODS = new Map([
+          ["FY26", new Set(M.slice(0, 9))],
+        ]);
+        function isTemporarilyHidden(row) {
+          const hiddenMonths = TEMPORARILY_HIDDEN_PERIODS.get(row.year);
+          return hiddenMonths
+            ? hiddenMonths.has(row.m ?? row.month)
+            : false;
+        }
+        function visibleRows(rows) {
+          return rows.filter((row) => !isTemporarilyHidden(row));
+        }
+        function populateMonthFilter() {
+          const selectedMonth = $("m").value,
+            hiddenMonths = TEMPORARILY_HIDDEN_PERIODS.get($("year").value);
+          $("m").replaceChildren(new Option("All Months", "All Months"));
+          M.filter((month) => !hiddenMonths || !hiddenMonths.has(month)).forEach(
+            (month) => $("m").add(new Option(month, month)),
+          );
+          const monthIsAvailable = [...$("m").options].some(
+            (option) => option.value === selectedMonth,
+          );
+          $("m").value = monthIsAvailable ? selectedMonth : "All Months";
+          return $("m").value !== selectedMonth;
+        }
+        function chartMonths() {
+          const hiddenMonths = TEMPORARILY_HIDDEN_PERIODS.get(
+            $("year").value,
+          );
+          return M.filter((month) => !hiddenMonths || !hiddenMonths.has(month));
+        }
+        populateMonthFilter();
         const currentDate = new Date(),
           previousMonthIndex =
             (currentDate.getMonth() + M.length - 1) % M.length,
@@ -1099,7 +1133,8 @@
           audienceData = {},
           campaignsData = [],
           formsData = [],
-          availableMetrics = new Set();
+          availableMetrics = new Set(),
+          defaultYear = "All Years";
         const metricValue = (row, metric) => {
             if (!availableMetrics.has(metric)) return null;
             const productIndex = PRODUCTS.indexOf($("p").value);
@@ -1124,7 +1159,7 @@
             if (productIndex === -1) return row.value ?? null;
             return row.products?.[productIndex] ?? null;
           },
-          scope = () => {
+          scope = (includePeriod = true) => {
             const selectedCountry = $("country").value,
               hasCountryTotals = data.some((row) => row.country === null);
             return data
@@ -1133,8 +1168,9 @@
                   ($("year").value === "All Years" ||
                     x.year === $("year").value) &&
                   ($("r").value === "All Regions" || x.r === $("r").value) &&
-                  ($("m").value === "All Months" || x.m === $("m").value) &&
-                  quarterMatches(x.q) &&
+                  (!includePeriod ||
+                    (($("m").value === "All Months" || x.m === $("m").value) &&
+                      quarterMatches(x.q))) &&
                   (selectedCountry === "All Countries"
                     ? !hasCountryTotals || x.country === null
                     : x.country === selectedCountry),
@@ -1157,7 +1193,7 @@
           },
           sum = (key, rows = scope()) =>
             rows.reduce((total, row) => total + (row[key] ?? 0), 0),
-          selectedRows = (rows) => {
+          selectedRows = (rows, includePeriod = true) => {
             const selectedCountry = $("country").value,
               hasCountryTotals = rows.some((row) => row.country === null);
             return rows.filter(
@@ -1165,8 +1201,10 @@
                 ($("year").value === "All Years" ||
                   x.year === $("year").value) &&
                 ($("r").value === "All Regions" || x.region === $("r").value) &&
-                ($("m").value === "All Months" || x.month === $("m").value) &&
-                quarterMatches(x.quarter) &&
+                (!includePeriod ||
+                  (($("m").value === "All Months" ||
+                    x.month === $("m").value) &&
+                    quarterMatches(x.quarter))) &&
                 (selectedCountry === "All Countries"
                   ? !hasCountryTotals || x.country === null
                   : x.country === selectedCountry),
@@ -1231,12 +1269,20 @@
           }
         }
         function bars(id, a) {
-          let mx = Math.max(...a.map((x) => x[1]), 1);
+          const availableValues = a
+            .map(([, value]) => value)
+            .filter(
+              (value) => typeof value === "number" && Number.isFinite(value),
+            );
+          let mx = Math.max(...availableValues, 1);
           if (!$(id)) return;
           $(id).innerHTML = a
             .map(
-              (x) =>
-                `<div class="bar"><span>${escapeHtml(x[0])}</span><div class="track"><div class="fill" style="width:${(x[1] / mx) * 100}%"></div></div><b>${fmt(x[1])}</b></div>`,
+              ([label, value]) => {
+                const hasValue =
+                  typeof value === "number" && Number.isFinite(value);
+                return `<div class="bar"><span>${escapeHtml(label)}</span><div class="track">${hasValue ? `<div class="fill" style="width:${(value / mx) * 100}%"></div>` : ""}</div><b>${hasValue ? fmt(value) : "Not available"}</b></div>`;
+              },
             )
             .join("");
         }
@@ -1244,40 +1290,63 @@
           lineMulti("trend", [
             {
               label: "Total Database",
-              v: monthly((row) => row.db ?? 0),
+              v: monthly((row) => row.db),
               c: "#1267e8",
             },
             {
               label: "Marketable Database",
-              v: monthly((row) => row.market ?? 0),
+              v: monthly((row) => row.market),
               c: "#16a36a",
             },
           ]);
         }
         function lineMulti(id, sets) {
+          const months = chartMonths(),
+            availableValues = sets
+              .flatMap((set) => set.v)
+              .filter(
+                (value) =>
+                  typeof value === "number" && Number.isFinite(value),
+              );
           let W = 700,
             H = 210,
             p = 25,
-            mx = Math.max(1, ...sets.flatMap((z) => z.v)) * 1.08,
-            X = (i) => p + (i * (W - 2 * p)) / 11,
+            mx = Math.max(1, ...availableValues) * 1.08,
+            X = (i) =>
+              p + (i * (W - 2 * p)) / Math.max(months.length - 1, 1),
             Y = (v) => H - p - (v / mx) * (H - 2 * p),
-            z = `<svg viewBox="0 0 ${W} 245" role="img" aria-label="Monthly trend: ${sets.map((set) => escapeHtml(set.label)).join(", ")}">`;
-          M.forEach(
+            z = `<svg viewBox="0 0 ${W} 245" role="img" aria-label="Monthly trend: ${sets.map((set) => escapeHtml(set.label)).join(", ")}"><desc>Month and quarter filters do not apply to trends. Gaps indicate data unavailable for the selected filters. Known zero values appear on the baseline.</desc>`;
+          z += `<text x="${W - p}" y="16" text-anchor="end" font-size="9" fill="#718098">Month/Quarter filters off; gap = no data</text>`;
+          months.forEach(
             (m, i) =>
               (z += `<text x="${X(i)}" y="205" text-anchor="middle" font-size="8" fill="#718098">${m.slice(0, 3)}</text>`),
           );
-          sets.forEach(
-            (a) =>
-              (z += `<polyline fill="none" stroke="${a.c}" stroke-width="3" points="${a.v.map((v, i) => X(i) + "," + Y(v)).join(" ")}"/>`),
-          );
+          sets.forEach((set) => {
+            let segment = [];
+            const addSegment = () => {
+              if (segment.length > 1) {
+                z += `<polyline fill="none" stroke="${set.c}" stroke-width="3" points="${segment.join(" ")}"/>`;
+              }
+              segment = [];
+            };
+            set.v.forEach((value, index) => {
+              if (typeof value !== "number" || !Number.isFinite(value)) {
+                addSegment();
+                return;
+              }
+              segment.push(`${X(index)},${Y(value)}`);
+            });
+            addSegment();
+          });
           sets.forEach((set, index) => {
             const center = ((index + 0.5) * W) / sets.length;
             set.v.forEach((value, monthIndex) => {
+              if (typeof value !== "number" || !Number.isFinite(value)) return;
               const valueLabel =
                   set.format === "percent"
                     ? `${value.toFixed(1)}%`
                     : fmt(value),
-                tooltip = `${M[monthIndex]}: ${set.label} ${valueLabel}`;
+                tooltip = `${months[monthIndex]}: ${set.label} ${valueLabel}`;
               z += `<circle class="chart-point" cx="${X(monthIndex)}" cy="${Y(value)}" r="3" fill="${set.c}" tabindex="0" aria-label="${escapeHtml(tooltip)}"><title>${escapeHtml(tooltip)}</title></circle>`;
             });
             z += `<g aria-hidden="true"><line x1="${center - 58}" y1="230" x2="${center - 42}" y2="230" stroke="${set.c}" stroke-width="3"/><text x="${center - 36}" y="233" font-size="10" fill="#536178">${escapeHtml(set.label)}</text></g>`;
@@ -1285,10 +1354,11 @@
           if ($(id)) $(id).innerHTML = z + "</svg>";
         }
         function monthly(fn) {
-          return M.map((m) =>
-            scope()
-              .filter((x) => x.m === m)
-              .reduce((a, b) => a + fn(b), 0),
+          return chartMonths().map((month) =>
+            sumAvailable(
+              scope(false).filter((row) => row.m === month),
+              fn,
+            ),
           );
         }
         function sumRecords(rows, key) {
@@ -1309,17 +1379,10 @@
             ? fmt(value)
             : "Not available";
         }
-        function campaignRate(row) {
-          return {
-            open:
-              row.delivered && typeof row.uniqueOpens === "number"
-                ? (row.uniqueOpens / row.delivered) * 100
-                : null,
-            ctr:
-              row.sent && typeof row.clicks === "number"
-                ? (row.clicks / row.sent) * 100
-                : null,
-          };
+        function campaignClickThroughRate(row) {
+          return row.sent && typeof row.clicks === "number"
+            ? (row.clicks / row.sent) * 100
+            : null;
         }
         function unavailable(id, message) {
           if ($(id)) $(id).innerHTML = `<div class="sub">${message}</div>`;
@@ -1397,18 +1460,31 @@
                 "dashboard-data.json has an invalid data structure.",
               );
             }
-            data = payload.records;
-            estoreData = payload.estore;
+            data = visibleRows(payload.records);
+            estoreData = visibleRows(payload.estore);
             availableEstoreMetrics = new Set(payload.estoreMetrics);
-            engagementData = payload.engagement;
+            engagementData = {
+              engaged: visibleRows(payload.engagement.engaged),
+              touched: visibleRows(payload.engagement.touched),
+            };
             availableEngagementMetrics = new Set(payload.engagementMetrics);
-            marketableBreakdownData = payload.marketableBreakdown;
+            marketableBreakdownData = {
+              i4b: visibleRows(payload.marketableBreakdown.i4b),
+              withoutI4B: visibleRows(
+                payload.marketableBreakdown.withoutI4B,
+              ),
+              nonEstore: visibleRows(payload.marketableBreakdown.nonEstore),
+            };
             availableMarketableBreakdownMetrics = new Set(
               payload.marketableBreakdownMetrics,
             );
-            audienceData = payload.audienceDimensions;
-            campaignsData = payload.campaigns;
-            formsData = payload.forms;
+            audienceData = Object.fromEntries(
+              Object.entries(payload.audienceDimensions).map(
+                ([dimension, rows]) => [dimension, visibleRows(rows)],
+              ),
+            );
+            campaignsData = visibleRows(payload.campaigns);
+            formsData = visibleRows(payload.forms);
             availableMetrics = new Set(payload.metrics);
             populateFilter(
               "year",
@@ -1423,7 +1499,11 @@
                   yearDigits === targetYear.slice(-2)
                 );
               });
-            if (matchingYear) $("year").value = matchingYear.value;
+            if (matchingYear) {
+              defaultYear = matchingYear.value;
+              $("year").value = defaultYear;
+            }
+            populateMonthFilter();
             populateFilter(
               "r",
               "All Regions",
@@ -1462,11 +1542,19 @@
             optout = sum("optOut", scoped),
             neither = sum("neither", scoped),
             i4bRows = selectedRows(marketableBreakdownData.i4b || []),
+            i4bTrendRows = selectedRows(
+              marketableBreakdownData.i4b || [],
+              false,
+            ),
             i4b = sumAvailable(i4bRows, (row) =>
               marketableBreakdownValue(row, "i4b"),
             ),
             withoutI4BRows = selectedRows(
               marketableBreakdownData.withoutI4B || [],
+            ),
+            withoutI4BTrendRows = selectedRows(
+              marketableBreakdownData.withoutI4B || [],
+              false,
             ),
             withoutI4B = sumAvailable(withoutI4BRows, (row) =>
               marketableBreakdownValue(row, "withoutI4B"),
@@ -1474,12 +1562,19 @@
             nonEstoreRows = selectedRows(
               marketableBreakdownData.nonEstore || [],
             ),
+            nonEstoreTrendRows = selectedRows(
+              marketableBreakdownData.nonEstore || [],
+              false,
+            ),
             nonEstore = sumAvailable(nonEstoreRows, (row) =>
               marketableBreakdownValue(row, "nonEstore"),
             ),
             scopedEstore = selectedRows(estoreData),
+            scopedEstoreTrend = selectedRows(estoreData, false),
             campaignRows = selectedRows(campaignsData),
+            campaignTrendRows = selectedRows(campaignsData, false),
             formRows = selectedRows(formsData),
+            formTrendRows = selectedRows(formsData, false),
             hasMetricData = (metric) =>
               scoped.some((row) => typeof row[metric] === "number"),
             scopeValue = (metric, value) => {
@@ -1568,20 +1663,16 @@
           if (engagedRows.length && availableEngagementMetrics.has("engaged")) {
             engagementBars.push([
               "Engaged Contacts",
-              engagedRows.reduce(
-                (total, row) =>
-                  total + (engagementMetricValue(row, "engaged") ?? 0),
-                0,
+              sumAvailable(engagedRows, (row) =>
+                engagementMetricValue(row, "engaged"),
               ),
             ]);
           }
           if (touchedRows.length && availableEngagementMetrics.has("touched")) {
             engagementBars.push([
               "Touched Contacts",
-              touchedRows.reduce(
-                (total, row) =>
-                  total + (engagementMetricValue(row, "touched") ?? 0),
-                0,
+              sumAvailable(touchedRows, (row) =>
+                engagementMetricValue(row, "touched"),
               ),
             ]);
           }
@@ -1657,7 +1748,7 @@
                 ? [
                     {
                       label: "Opt-in",
-                      v: monthly((x) => x.optIn ?? 0),
+                      v: monthly((x) => x.optIn),
                       c: "#16a36a",
                     },
                   ]
@@ -1666,7 +1757,7 @@
                 ? [
                     {
                       label: "Opt-out",
-                      v: monthly((x) => x.optOut ?? 0),
+                      v: monthly((x) => x.optOut),
                       c: "#dc4c64",
                     },
                   ]
@@ -1675,7 +1766,7 @@
                 ? [
                     {
                       label: "Neither",
-                      v: monthly((x) => x.neither ?? 0),
+                      v: monthly((x) => x.neither),
                       c: "#f5a623",
                     },
                   ]
@@ -1707,7 +1798,7 @@
                 ? [
                     {
                       label: "Marketable Database",
-                      v: monthly((x) => x.market ?? 0),
+                      v: monthly((x) => x.market),
                       c: "#1267e8",
                     },
                   ]
@@ -1716,12 +1807,12 @@
                 ? [
                     {
                       label: "I4B",
-                      v: M.map(
+                      v: chartMonths().map(
                         (month) =>
                           sumAvailable(
-                            i4bRows.filter((row) => row.month === month),
+                            i4bTrendRows.filter((row) => row.month === month),
                             (row) => marketableBreakdownValue(row, "i4b"),
-                          ) ?? 0,
+                          ),
                       ),
                       c: "#16a36a",
                     },
@@ -1731,13 +1822,15 @@
                 ? [
                     {
                       label: "Without I4B",
-                      v: M.map(
+                      v: chartMonths().map(
                         (month) =>
                           sumAvailable(
-                            withoutI4BRows.filter((row) => row.month === month),
+                            withoutI4BTrendRows.filter(
+                              (row) => row.month === month,
+                            ),
                             (row) =>
                               marketableBreakdownValue(row, "withoutI4B"),
-                          ) ?? 0,
+                          ),
                       ),
                       c: "#7c4dff",
                     },
@@ -1747,12 +1840,14 @@
                 ? [
                     {
                       label: "Non-eStore",
-                      v: M.map(
+                      v: chartMonths().map(
                         (month) =>
                           sumAvailable(
-                            nonEstoreRows.filter((row) => row.month === month),
+                            nonEstoreTrendRows.filter(
+                              (row) => row.month === month,
+                            ),
                             (row) => marketableBreakdownValue(row, "nonEstore"),
-                          ) ?? 0,
+                          ),
                       ),
                       c: "#f5a623",
                     },
@@ -1823,19 +1918,14 @@
           ]
             .map((x) => k(x[0], typeof x[1] === "number" ? fmt(x[1]) : x[1]))
             .join("");
-          const registered = scopedEstore.reduce(
-              (total, row) =>
-                total + (estoreMetricValue(row, "registered") ?? 0),
-              0,
+          const registered = sumAvailable(scopedEstore, (row) =>
+              estoreMetricValue(row, "registered"),
             ),
-            sale = scopedEstore.reduce(
-              (total, row) => total + (estoreMetricValue(row, "sale") ?? 0),
-              0,
+            sale = sumAvailable(scopedEstore, (row) =>
+              estoreMetricValue(row, "sale"),
             ),
-            abandoned = scopedEstore.reduce(
-              (total, row) =>
-                total + (estoreMetricValue(row, "abandoned") ?? 0),
-              0,
+            abandoned = sumAvailable(scopedEstore, (row) =>
+              estoreMetricValue(row, "abandoned"),
             ),
             estoreTotals = { registered, sale, abandoned },
             estoreLabels = {
@@ -1849,28 +1939,30 @@
             ["Abandoned", abandoned],
             [
               "Sale Rate",
-              registered ? ((sale / registered) * 100).toFixed(1) + "%" : "0%",
+              registered && sale !== null
+                ? ((sale / registered) * 100).toFixed(1) + "%"
+                : "Not available",
             ],
           ]
             .map((x) =>
               k(
                 x[0],
                 scopedEstore.length
-                  ? typeof x[1] === "number"
-                    ? fmt(x[1])
-                    : x[1]
+                  ? x[1] === null
+                    ? "Not available"
+                    : typeof x[1] === "number"
+                      ? fmt(x[1])
+                      : x[1]
                   : "No data",
               ),
             )
             .join("");
           const estoreMonthly = (metric) =>
-            M.map((month) =>
-              scopedEstore
-                .filter((row) => row.month === month)
-                .reduce(
-                  (total, row) => total + (estoreMetricValue(row, metric) ?? 0),
-                  0,
-                ),
+            chartMonths().map((month) =>
+              sumAvailable(
+                scopedEstoreTrend.filter((row) => row.month === month),
+                (row) => estoreMetricValue(row, metric),
+              ),
             );
           if (scopedEstore.length) {
             lineMulti("estoreTrend", [
@@ -1894,10 +1986,17 @@
               ]),
             );
             bars("estoreRates", [
-              ["Sale / Registered", registered ? (sale / registered) * 100 : 0],
+              [
+                "Sale / Registered",
+                registered && sale !== null
+                  ? (sale / registered) * 100
+                  : null,
+              ],
               [
                 "Abandoned / Registered",
-                registered ? (abandoned / registered) * 100 : 0,
+                registered && abandoned !== null
+                  ? (abandoned / registered) * 100
+                  : null,
               ],
             ]);
           } else {
@@ -1911,14 +2010,18 @@
           if (scoped.length) {
             const marketableByRegion = new Map();
             scoped.forEach((row) => {
-              marketableByRegion.set(
-                row.r,
-                (marketableByRegion.get(row.r) || 0) + (row.market ?? 0),
-              );
+              const rows = marketableByRegion.get(row.r) || [];
+              rows.push(row);
+              marketableByRegion.set(row.r, rows);
             });
             bars(
               "audienceRegion",
-              [...marketableByRegion.entries()].sort((a, b) => b[1] - a[1]),
+              [...marketableByRegion.entries()]
+                .map(([region, rows]) => [
+                  region,
+                  sumAvailable(rows, (row) => row.market),
+                ])
+                .sort((a, b) => (b[1] ?? -Infinity) - (a[1] ?? -Infinity)),
             );
           } else {
             unavailable(
@@ -1926,28 +2029,46 @@
               "No marketable data for this filter.",
             );
           }
-          const monthlyCampaigns = M.map((month) =>
-              campaignRows.filter((row) => row.month === month),
+          const monthlyCampaigns = chartMonths().map((month) =>
+              campaignTrendRows.filter((row) => row.month === month),
             ),
             campaignOpen = monthlyCampaigns.map((rows) => {
-              const deliveredTotal = sumRecords(rows, "delivered");
-              return deliveredTotal
-                ? (sumRecords(rows, "uniqueOpens") / deliveredTotal) * 100
-                : 0;
+              const deliveredTotal = sumAvailable(
+                  rows,
+                  (row) => row.delivered,
+                ),
+                uniqueOpensTotal = sumAvailable(
+                  rows,
+                  (row) => row.uniqueOpens,
+                );
+              return deliveredTotal && uniqueOpensTotal !== null
+                ? (uniqueOpensTotal / deliveredTotal) * 100
+                : null;
             }),
             campaignCtrByMonth = monthlyCampaigns.map((rows) => {
-              const sentTotal = sumRecords(rows, "sent");
-              return sentTotal
-                ? (sumRecords(rows, "clicks") / sentTotal) * 100
-                : 0;
+              const sentTotal = sumAvailable(rows, (row) => row.sent),
+                clicksTotal = sumAvailable(rows, (row) => row.clicks);
+              return sentTotal && clicksTotal !== null
+                ? (clicksTotal / sentTotal) * 100
+                : null;
             });
+          const hasCampaignOpenData = campaignTrendRows.some(
+            (row) => typeof row.uniqueOpens === "number",
+          );
+          $("campaignGraphSub").textContent = hasCampaignOpenData
+            ? "Open Rate and CTR by month"
+            : "CTR by month; open-rate data unavailable.";
           lineMulti("campaignGraph", [
-            {
-              label: "Open Rate",
-              v: campaignOpen,
-              c: "#1267e8",
-              format: "percent",
-            },
+            ...(hasCampaignOpenData
+              ? [
+                  {
+                    label: "Open Rate",
+                    v: campaignOpen,
+                    c: "#1267e8",
+                    format: "percent",
+                  },
+                ]
+              : []),
             {
               label: "CTR",
               v: campaignCtrByMonth,
@@ -1962,33 +2083,40 @@
               campaignRows.filter((row) => row.type === type).length,
             ]),
           );
-          const formByMonth = M.map((month) =>
-              formRows.filter((row) => row.month === month),
+          const formByMonth = chartMonths().map((month) =>
+              formTrendRows.filter((row) => row.month === month),
             ),
             formByType = [...new Set(formRows.map((row) => row.type))].map(
               (type) => [
                 type,
-                sumRecords(
+                sumAvailable(
                   formRows.filter((row) => row.type === type),
-                  "submissions",
+                  (row) => row.submissions,
                 ),
               ],
             );
           lineMulti("formGraph", [
             {
               label: "Submissions",
-              v: formByMonth.map((rows) => sumRecords(rows, "submissions")),
+              v: formByMonth.map((rows) =>
+                sumAvailable(rows, (row) => row.submissions),
+              ),
               c: "#16a36a",
             },
           ]);
           bars("formMix", formByType);
           if (scoped.length) {
-            bars(
-              "explorerGraph",
-              metricLabels
-                .filter(([metric]) => availableMetrics.has(metric))
-                .map(([metric, label]) => [label, sum(metric, scoped)]),
-            );
+            const explorerMetrics = metricLabels
+              .filter(([metric]) => availableMetrics.has(metric))
+              .map(([metric, label]) => [
+                label,
+                sumAvailable(scoped, (row) => row[metric]),
+              ]);
+            if (explorerMetrics.some(([, value]) => value !== null)) {
+              bars("explorerGraph", explorerMetrics);
+            } else {
+              unavailable("explorerGraph", "No metric values for this filter.");
+            }
           } else {
             unavailable("explorerGraph", "No data for this filter.");
           }
@@ -2031,8 +2159,8 @@
                 M.indexOf(b.month) - M.indexOf(a.month),
             )
             .map((row) => {
-              const rate = campaignRate(row);
-              return `<tr><td>${escapeHtml(row.campaign)}</td><td>${escapeHtml(row.region)}</td><td>${escapeHtml(row.country === "All" ? "All Countries" : (row.country ?? "Not available"))}</td><td>${escapeHtml(row.month)}</td><td>${escapeHtml(row.type)}</td><td>${displayAvailable(row.sent)}</td><td>${displayAvailable(row.delivered)}</td><td>${rate.open === null ? "Not available" : rate.open.toFixed(1) + "%"}</td><td>${rate.ctr === null ? "Not available" : rate.ctr.toFixed(1) + "%"}</td></tr>`;
+              const ctr = campaignClickThroughRate(row);
+              return `<tr><td>${escapeHtml(row.campaign)}</td><td>${escapeHtml(row.region)}</td><td>${escapeHtml(row.country === "All" ? "All Countries" : (row.country ?? "Not available"))}</td><td>${escapeHtml(row.month)}</td><td>${escapeHtml(row.type)}</td><td>${displayAvailable(row.sent)}</td><td>${displayAvailable(row.delivered)}</td><td>${displayAvailable(row.clicks)}</td><td>${displayAvailable(row.uniqueClicks)}</td><td>${ctr === null ? "Not available" : ctr.toFixed(1) + "%"}</td></tr>`;
             });
           window.__formRows = formRows
             .filter(
@@ -2110,7 +2238,11 @@
         document.querySelectorAll("select").forEach(
           (x) =>
             (x.onchange = (event) => {
-              if (event.target.id === "m") {
+              if (event.target.id === "year") {
+                if (populateMonthFilter()) {
+                  $("q").value = quarterForMonth($("m").value);
+                }
+              } else if (event.target.id === "m") {
                 $("q").value = quarterForMonth(event.target.value);
               } else if (event.target.id === "q") {
                 $("m").value = "All Months";
@@ -2133,9 +2265,13 @@
             }),
         );
         $("reset").onclick = () => {
-          document
-            .querySelectorAll("select")
-            .forEach((x) => (x.selectedIndex = 0));
+          $("year").value = defaultYear;
+          populateMonthFilter();
+          $("m").value = M[previousMonthIndex];
+          $("q").value = quarterForMonth($("m").value);
+          $("r").value = "All Regions";
+          $("country").value = "All Countries";
+          $("p").value = "All Products";
           refreshCountryFilter();
           resetTablePages();
           render();
